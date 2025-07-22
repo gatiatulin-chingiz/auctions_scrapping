@@ -128,13 +128,12 @@ def save_to_excel_tool(args: dict, excel_writer=None) -> str:
         return "ExcelWriter не передан"
 
 # --- Основная функция для запуска пайплайна из Jupyter ---
-def run_vin_pipeline(vin_list, model_path, output_file='output.xlsx'):
+def run_vin_pipeline(vin_list, llm, output_file='output.xlsx'):
     """
     vin_list: список VIN-номеров
-    model_path: путь к модели Qwen-8B
+    llm: объект CustomLLM (уже загруженный)
     output_file: имя выходного Excel-файла
     """
-    llm = CustomLLM(model_name_or_path=model_path)
     excel_writer = ExcelWriter(output_file=output_file)
 
     # Обёртки для инструментов с excel_writer
@@ -179,5 +178,6 @@ def run_vin_pipeline(vin_list, model_path, output_file='output.xlsx'):
     print(f"Готово! Результаты сохранены в {output_file}")
 
 # --- Пример вызова (раскомментируйте для запуска в Jupyter) ---
+# llm = CustomLLM(model_name_or_path='Qwen3-8B')
 # vin_list = ['RH21J-001845', 'SALCP2BG2HH699250', '1HD4CR21XDC451359', 'ZDMAA06JAHB019322']
-# run_vin_pipeline(vin_list, model_path='Qwen3-8B', output_file='output.xlsx')
+# run_vin_pipeline(vin_list, llm, output_file='output.xlsx')
