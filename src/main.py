@@ -66,6 +66,7 @@ class ExcelWriter:
     def save(self, vin, url, summary):
         with self.lock:
             self.data.append({'VIN': vin, 'URL': url, 'Summary': summary})
+            print(f"Сохраняю файл в: {self.output_file}")  # <-- добавь эту строку
             pd.DataFrame(self.data).to_excel(self.output_file, index=False)
 
 # --- Инструменты ---
