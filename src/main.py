@@ -105,17 +105,29 @@ def yandex_search_tool(vin: str) -> list:
     return links
 
 def get_page_text_tool(url: str) -> str:
+    """
+    Получает текст страницы по ссылке через Selenium + BeautifulSoup.
+    """
     try:
-        headers = {'User-Agent': UserAgent().random}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        ua = UserAgent()
+        options = Options()
+        options.add_argument(f'user-agent={ua.random}')
+        options.add_argument('--headless')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(url)
+        time.sleep(3)
+        html = driver.page_source
+        driver.quit()
+        soup = BeautifulSoup(html, 'html.parser')
         for s in soup(['script', 'style']):
             s.decompose()
         text = soup.get_text(separator=' ', strip=True)
         return text
     except Exception as e:
-        print(f"[Ошибка при загрузке {url}]: {e}")
+        print(f"[Ошибка при загрузке {url} через Selenium]: {e}")
         return ""
 
 def save_to_excel_tool(args: dict, excel_writer=None) -> str:
@@ -126,6 +138,7 @@ def save_to_excel_tool(args: dict, excel_writer=None) -> str:
     summary = args.get('summary')
     if excel_writer is not None:
         excel_writer.save(vin, url, summary)
+        print(f"Успешно сохранено: VIN={vin}, URL={url}")
         return f"Сохранено: VIN={vin}, URL={url}"
     else:
         return "ExcelWriter не передан"
@@ -139,7 +152,6 @@ def run_vin_pipeline(vin_list, llm, output_file='output.xlsx'):
     """
     excel_writer = ExcelWriter(output_file=output_file)
 
-    # Обёртки для инструментов с excel_writer
     def save_to_excel_tool_wrapped(args):
         return save_to_excel_tool(args, excel_writer=excel_writer)
 
@@ -152,7 +164,7 @@ def run_vin_pipeline(vin_list, llm, output_file='output.xlsx'):
         Tool(
             name="GetPageTextTool",
             func=get_page_text_tool,
-            description="Получает текст страницы по URL. На вход принимает URL (строка)."
+            description="Получает текст страницы по URL через Selenium. На вход принимает URL (строка)."
         ),
         Tool(
             name="SaveToExcelTool",
@@ -173,8 +185,8 @@ def run_vin_pipeline(vin_list, llm, output_file='output.xlsx'):
         prompt = (
             f"Для VIN-номера {vin}:\n"
             f"1. Вызови YandexSearchTool, чтобы получить список ссылок.\n"
-            f"2. Для каждой ссылки вызови GetPageTextTool, чтобы получить текст.\n"
-            f"3. Проанализируй текст: если VIN найден, сделай краткое summary (фрагмент с VIN) и вызови SaveToExcelTool с vin, url и summary.\n"
+            f"2. Для каждой ссылки вызови GetPageTextTool, чтобы получить текст страницы.\n"
+            f"3. Если VIN найден в тексте, сразу сделай краткое summary (фрагмент с VIN) и вызови SaveToExcelTool с vin, url и summary. Не делай повторных запросов к этой же странице.\n"
             f"Если VIN не найден ни на одной странице — ничего не сохраняй."
         )
         agent.run(prompt)
