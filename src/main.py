@@ -118,6 +118,8 @@ def get_page_text_tool(url: str) -> str:
         return ""
 
 def save_to_excel_tool(args: dict, excel_writer=None) -> str:
+    if not isinstance(args, dict):
+        return "Ошибка: SaveToExcelTool ожидает словарь с ключами 'vin', 'url', 'summary'."
     vin = args.get('vin')
     url = args.get('url')
     summary = args.get('summary')
