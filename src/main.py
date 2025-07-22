@@ -1,6 +1,3 @@
-%load_ext autoreload
-%autoreload 2
-
 import torch
 from transformers import Qwen2VLForConditionalGeneration, AutoModelForCausalLM, Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 from qwen_vl_utils import process_vision_info
@@ -21,13 +18,7 @@ from bs4 import BeautifulSoup
 import requests
 import threading
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
-torch.cuda.empty_cache()
-
-
-
+# --- Класс кастомной LLM ---
 class CustomLLM(LLM):
     model_name: str = "Qwen-8B"
     tokenizer: AutoTokenizer = None
@@ -41,8 +32,6 @@ class CustomLLM(LLM):
             model_name_or_path,
             torch_dtype="auto",
             device_map="auto",
-#            trust_remote_code=True,
-#            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
         ).eval()
 
     @property
@@ -65,8 +54,7 @@ class CustomLLM(LLM):
                 pad_token_id=self.tokenizer.eos_token_id
             )
         response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return response[len(prompt):]  # Возвращаем только сгенерированную часть
-
+        return response[len(prompt):]
 
 # --- Глобальный Excel Writer (потокобезопасный) ---
 class ExcelWriter:
@@ -80,13 +68,8 @@ class ExcelWriter:
             self.data.append({'VIN': vin, 'URL': url, 'Summary': summary})
             pd.DataFrame(self.data).to_excel(self.output_file, index=False)
 
-excel_writer = ExcelWriter()
-
 # --- Инструменты ---
 def yandex_search_tool(vin: str) -> list:
-    """
-    Поиск по VIN через Selenium, возвращает список ссылок (до 10 с первых 2 страниц).
-    """
     ua = UserAgent()
     options = Options()
     options.add_argument(f'user-agent={ua.random}')
@@ -110,7 +93,6 @@ def yandex_search_tool(vin: str) -> list:
             driver.quit()
         except:
             pass
-    # Парсим ссылки
     soup = BeautifulSoup(full_html, 'html.parser')
     links = []
     for a in soup.find_all('a', href=True):
@@ -122,9 +104,6 @@ def yandex_search_tool(vin: str) -> list:
     return links
 
 def get_page_text_tool(url: str) -> str:
-    """
-    Получает текст страницы по ссылке (Selenium + BeautifulSoup).
-    """
     try:
         headers = {'User-Agent': UserAgent().random}
         resp = requests.get(url, headers=headers, timeout=10)
@@ -138,57 +117,67 @@ def get_page_text_tool(url: str) -> str:
         print(f"[Ошибка при загрузке {url}]: {e}")
         return ""
 
-def save_to_excel_tool(args: dict) -> str:
-    """
-    Сохраняет найденный VIN, ссылку и summary в Excel.
-    args = {'vin': ..., 'url': ..., 'summary': ...}
-    """
+def save_to_excel_tool(args: dict, excel_writer=None) -> str:
     vin = args.get('vin')
     url = args.get('url')
     summary = args.get('summary')
-    excel_writer.save(vin, url, summary)
-    return f"Сохранено: VIN={vin}, URL={url}"
+    if excel_writer is not None:
+        excel_writer.save(vin, url, summary)
+        return f"Сохранено: VIN={vin}, URL={url}"
+    else:
+        return "ExcelWriter не передан"
 
-# --- Описание инструментов для агента ---
-tools = [
-    Tool(
-        name="YandexSearchTool",
-        func=yandex_search_tool,
-        description="Ищет VIN в Яндексе и возвращает список ссылок (до 10). На вход принимает VIN-номер (строка)."
-    ),
-    Tool(
-        name="GetPageTextTool",
-        func=get_page_text_tool,
-        description="Получает текст страницы по URL. На вход принимает URL (строка)."
-    ),
-    Tool(
-        name="SaveToExcelTool",
-        func=save_to_excel_tool,
-        description="Сохраняет найденный VIN, ссылку и summary в Excel. На вход принимает словарь с ключами 'vin', 'url', 'summary'."
-    ),
-]
+# --- Основная функция для запуска пайплайна из Jupyter ---
+def run_vin_pipeline(vin_list, model_path, output_file='output.xlsx'):
+    """
+    vin_list: список VIN-номеров
+    model_path: путь к модели Qwen-8B
+    output_file: имя выходного Excel-файла
+    """
+    llm = CustomLLM(model_name_or_path=model_path)
+    excel_writer = ExcelWriter(output_file=output_file)
 
-# --- Инициализация вашей модели ---
-llm = CustomLLM(model_name_or_path="Qwen3-8B")
+    # Обёртки для инструментов с excel_writer
+    def save_to_excel_tool_wrapped(args):
+        return save_to_excel_tool(args, excel_writer=excel_writer)
 
-# --- Инициализация агента ---
-agent = initialize_agent(
-    tools,
-    llm,
-    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-    handle_parsing_errors=True,
-    verbose=True
-)
+    tools = [
+        Tool(
+            name="YandexSearchTool",
+            func=yandex_search_tool,
+            description="Ищет VIN в Яндексе и возвращает список ссылок (до 10). На вход принимает VIN-номер (строка)."
+        ),
+        Tool(
+            name="GetPageTextTool",
+            func=get_page_text_tool,
+            description="Получает текст страницы по URL. На вход принимает URL (строка)."
+        ),
+        Tool(
+            name="SaveToExcelTool",
+            func=save_to_excel_tool_wrapped,
+            description="Сохраняет найденный VIN, ссылку и summary в Excel. На вход принимает словарь с ключами 'vin', 'url', 'summary'."
+        ),
+    ]
 
-# --- Пример запуска пайплайна через агента ---
-vin_list = ['RH21J-001845', 'SALCP2BG2HH699250', '1HD4CR21XDC451359', 'ZDMAA06JAHB019322']
-
-for vin in vin_list:
-    prompt = (
-        f"Для VIN-номера {vin}:\n"
-        f"1. Вызови YandexSearchTool, чтобы получить список ссылок.\n"
-        f"2. Для каждой ссылки вызови GetPageTextTool, чтобы получить текст.\n"
-        f"3. Проанализируй текст: если VIN найден, сделай краткое summary (фрагмент с VIN) и вызови SaveToExcelTool с vin, url и summary.\n"
-        f"Если VIN не найден ни на одной странице — ничего не сохраняй."
+    agent = initialize_agent(
+        tools,
+        llm,
+        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        handle_parsing_errors=True,
+        verbose=True
     )
-    agent.run(prompt)
+
+    for vin in vin_list:
+        prompt = (
+            f"Для VIN-номера {vin}:\n"
+            f"1. Вызови YandexSearchTool, чтобы получить список ссылок.\n"
+            f"2. Для каждой ссылки вызови GetPageTextTool, чтобы получить текст.\n"
+            f"3. Проанализируй текст: если VIN найден, сделай краткое summary (фрагмент с VIN) и вызови SaveToExcelTool с vin, url и summary.\n"
+            f"Если VIN не найден ни на одной странице — ничего не сохраняй."
+        )
+        agent.run(prompt)
+    print(f"Готово! Результаты сохранены в {output_file}")
+
+# --- Пример вызова (раскомментируйте для запуска в Jupyter) ---
+# vin_list = ['RH21J-001845', 'SALCP2BG2HH699250', '1HD4CR21XDC451359', 'ZDMAA06JAHB019322']
+# run_vin_pipeline(vin_list, model_path='Qwen3-8B', output_file='output.xlsx')
